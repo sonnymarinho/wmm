@@ -1,34 +1,25 @@
 FROM gitpod/workspace-full:latest
 
-# Install postgres
-USER root
-RUN apt-get update && apt-get install -y \
-        postgresql \
-        postgresql-contrib \
-    && apt-get clean && rm -rf /var/cache/apt/* && rm -rf /var/lib/apt/lists/* && rm -rf /tmp/*
+# Install PostgreSQL
+RUN sudo apt-get update \
+ && sudo apt-get install -y postgresql postgresql-contrib \
+ && sudo apt-get clean \
+ && sudo rm -rf /var/cache/apt/* /var/lib/apt/lists/* /tmp/*
 
-# Setup postgres server for user gitpod
-USER gitpod
-ENV PATH="/usr/lib/postgresql/10/bin:$PATH"
-RUN mkdir -p ~/pg/data; mkdir -p ~/pg/scripts; mkdir -p ~/pg/logs; mkdir -p ~/pg/sockets; initdb -D pg/data/
-RUN echo '#!/bin/bash\n\
-pg_ctl -D ~/pg/data/ -l ~/pg/logs/log -o "-k ~/pg/sockets" start' > ~/pg/scripts/pg_start.sh
-RUN echo '#!/bin/bash\n\
-pg_ctl -D ~/pg/data/ -l ~/pg/logs/log -o "-k ~/pg/sockets" stop' > ~/pg/scripts/pg_stop.sh
-RUN chmod +x ~/pg/scripts/*
-ENV PATH="$HOME/pg/scripts:$PATH"
+# Setup PostgreSQL server for user gitpod
+ENV PATH="$PATH:/usr/lib/postgresql/11/bin"
+ENV PGDATA="/home/gitpod/.pg_ctl/data"
+RUN mkdir -p ~/.pg_ctl/bin ~/.pg_ctl/data ~/.pg_ctl/sockets \
+ && initdb -D ~/.pg_ctl/data/ \
+ && printf "#!/bin/bash\npg_ctl -D ~/.pg_ctl/data/ -l ~/.pg_ctl/log -o \"-k ~/.pg_ctl/sockets\" start\n" > ~/.pg_ctl/bin/pg_start \
+ && printf "#!/bin/bash\npg_ctl -D ~/.pg_ctl/data/ -l ~/.pg_ctl/log -o \"-k ~/.pg_ctl/sockets\" stop\n" > ~/.pg_ctl/bin/pg_stop \
+ && chmod +x ~/.pg_ctl/bin/*
+ENV PATH="$PATH:$HOME/.pg_ctl/bin"
+ENV DATABASE_URL="postgresql://gitpod@localhost"
+ENV PGHOSTADDR="127.0.0.1"
+ENV PGDATABASE="postgres"
 
-# Project specifics
-# Setup diesel_cli
-ENV PATH="$HOME/.cargo/bin:$PATH"
-RUN cargo install diesel_cli --no-default-features --features postgres
-
-# Some transitive dependencies are very picky: We need the nightly build build on the 2018-04-14, meant for the 2018-04-15
-RUN rustup default nightly-2018-04-15
-# Set some environment variables
-ENV DATABASE_URL=postgres://gitpod@127.0.0.1/rust-web-with-rocket
-ENV ROCKET_ADDRESS=0.0.0.0
-ENV ROCKET_PORT=8000
-
-# Give back control
-USER root
+# This is a bit of a hack. At the moment we have no means of starting background
+# tasks from a Dockerfile. This workaround checks, on each bashrc eval, if the
+# PostgreSQL server is running, and if not starts it.
+RUN printf "\n# Auto-start PostgreSQL server.\n[[ \$(pg_ctl status | grep PID) ]] || pg_start > /dev/null\n" >> ~/.bashrc
